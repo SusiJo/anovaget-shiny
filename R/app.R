@@ -90,7 +90,8 @@ preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc
   
   # apply same dispersion fuction to testdata
   dispersionFunction(dds_test) <- dispFunc_train
-  test_vst <- vst(dds_test, blind=F)
+  test_vst_s4 <- vst(dds_test, blind=F)
+  test_vst <- t(assay(test_vst_s4))
   
   rm(dds_test, testdata, testdata_df, test_expr)
   
@@ -107,7 +108,7 @@ projectTestData <- function(preProc_output, scaling_method, header){
   }
   if (scaling_method == "vst"){
     train_pca <- out2$pca_obj
-    testdata <- t(preProc_output$test_vst)
+    testdata <- preProc_output$test_vst
     }
   if (scaling_method == "log") {
     train_pca <- out3$pca_obj
@@ -351,12 +352,15 @@ server <- function(input, output, session) {
 
       # if user data available, update pca plot
       observeEvent(input$Add,{
-        df = ext_data()
+
+        out = ext_data()
+        df <- projectTestData(out, scale_method(), colnames(meta_df))
+        df[is.na(df)] <- "not_available"
 
         tx2 <- highlight_key(df, ~row.names(df)) 
         plotlyProxy("pcaPlot", session) %>%
-          plotlyProxyInvoke("addTraces", x=tx2$data()[,pcx()], y=tx2$data()[,pcy()], color=metaselect(),
-                          type="scatter", mode="markers",
+          plotlyProxyInvoke("addTraces", x=tx2$data()[,pcx()], y=tx2$data()[,pcy()], color=tx2$data()[,metaselect()],
+                          type="scatter", mode="markers", name=tx2$data()[,metaselect()][1],
                           hovertemplate = paste("Sample:", row.names(df),'<extra></extra>'),
                           marker=list(color="#323232")) %>%
         highlight(on = "plotly_click", off = "plotly_doubleclick")
