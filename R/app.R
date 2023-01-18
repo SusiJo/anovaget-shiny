@@ -9,7 +9,11 @@ library(tidyr)
 library(dplyr)
 library(DESeq2)
 library(crosstalk)
+library(umap)
+library(reticulate)
+print("starting script")
 
+# shinyOptions(maxUploadSize=10000)
 options(shiny.maxRequestSize = 30*1024^2)
 options(warn=-1)
 
@@ -61,11 +65,19 @@ compute_PCA <- function(x, colData){
   # attach metadata
   df_pca <- as.data.frame(pca$x)[1:10]
   df_pca <- cbind(df_pca, colData)
-
-  # outputs the pca object, a dataframe with the first 10 PCs, ...
   
   out <- list("pca_obj"=pca, "df_pca"=df_pca, "evar"=explained_variance_ratio, 
               "pca_center"=pca$center, "pca_scale"=pca$scale, "pca_rotation"=pca$rotation)
+  return(out)
+}
+
+compute_UMAP <- function(x, colData, rstate){
+  umap_obj <- umap(x, random_state=rstate, n_neighbors=30, metric="manhattan") #method="umap-learn", 
+  
+  df_umap <- as.data.frame(umap_obj$layout)
+  df_umap <- cbind(df_umap, colData)
+  
+  out <- list("umap_obj"=umap_obj, "df_umap"=df_umap)
   return(out)
 }
 
@@ -87,57 +99,66 @@ preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc
                                       design=~1) # no design
   
   dds_test <- DESeq(dds_test)
-  
   # apply same dispersion fuction to testdata
   dispersionFunction(dds_test) <- dispFunc_train
   test_vst_s4 <- vst(dds_test, blind=F)
   test_vst <- t(assay(test_vst_s4))
   
-  rm(dds_test, testdata, testdata_df, test_expr)
+  #rm(dds_test, testdata, testdata_df, test_expr)
   
-  # transformed (normalized, scaled) user testdata
   output=list("test_vst"=test_vst, "test_sc"=test_sc, "test_log2"=test_log2)
   
   return(output)
 }
 
-projectTestData <- function(preProc_output, scaling_method, header){
+projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "unitvar") {
-    train_pca <- out1$pca_obj
     testdata <- preProc_output$test_sc
+    if(plot_type == "PCA"){
+      train_obj <- out1$pca_obj
+    } else if(plot_type == "UMAP"){
+      train_obj <- umap1$umap_obj
+    }
   }
   if (scaling_method == "vst"){
-    train_pca <- out2$pca_obj
     testdata <- preProc_output$test_vst
+    if(plot_type == "PCA"){
+      train_obj <- out2$pca_obj
+    } else if(plot_type == "UMAP"){
+      train_obj <- umap2$umap_obj
     }
+  }
   if (scaling_method == "log") {
-    train_pca <- out3$pca_obj
     testdata <- preProc_output$test_log2
+    if(plot_type == "PCA"){
+      train_obj <- out3$pca_obj
+    } else if(plot_type == "UMAP"){
+      train_obj <- umap3$umap_obj
     }
+  }
 
-  test_pca_projection <- predict(train_pca, testdata)
+  projection <- predict(train_obj, testdata)
   # artificial metadata frame for testdata
   meta_test <- data.frame(matrix(ncol = length(header), 
-                                  nrow = nrow(test_pca_projection)))
+                                  nrow = nrow(projection)))
   colnames(meta_test) <- header
-  
   meta_test[is.na(meta_test)] = "not_available"
   meta_test$Age_at_index <- rep(NA, length(row.names(meta_test)))
   meta_test$Survival_time <- rep(NA, length(row.names(meta_test)))
   meta_test$Tumor_stage <- rep(NA, length(row.names(meta_test)))
-  
   meta_test <- mutate_if(meta_test, is.character, as.factor)
   
-  # pca object with first 10 PCs for testdata
-  pca_test <- cbind(test_pca_projection[,1:10], meta_test)
+  # df for projected testdata with metadata
+  if(plot_type == "PCA"){ testdata_projected <- cbind(projection[,1:10], meta_test) }
+  else{ testdata_projected <- cbind(projection[,1:2], meta_test) }
   
-  return(pca_test)
+  return(testdata_projected)
 }
 
 ################################## READ DATA #################################
 
-# contains raw featureCounts from nf-core/rnaseq + metadata
-load("data/lihc_chol_liri_gtex_summarizedExperiment.RData")
+load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_summarizedExperiment.RData")
+print("loaded summarized expr")
 
 # COUNT DATA
 gene_names <- rowData(sexpr)$X
@@ -159,30 +180,46 @@ meta_df <- mutate_if(meta_df, is.character, as.factor)
 # DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
 # running DESeq makes the dispersionFunction available for VST transformation
 # count data: rows=genes,cols=samples
-dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
-                    colData = meta_df,
-                    design = ~ 1) # no design
-dds_train <- DESeq(dds_train)
+#dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
+                    #colData = meta_df,
+                    #design = ~ 1) # no design
+#dds_train <- DESeq(dds_train)
+# save(dds_train, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object.RData")
+
+
+load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_dds_object.RData")
+print("loaded deseq obj")
 train_dispersionFunc <- dispersionFunction(dds_train) 
 train_vst <- vst(dds_train, blind=T) 
 
-pp_sc <- preProcess(train_expr, method = c("scale", "center")) 
+pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
 train_sc <- predict(pp_sc, train_expr)
 
 #####################  APPLY FUNCTIONS ##############################
 
 # apply scaling
+print("scaling matrices")
 unitvar <- scaling_method(train_expr, "Unit variance")
 log2_scaled <- scaling_method(train_expr, "Log")
 
-# compute PCA for all transformed data
+print("computing pcas")
 out1 <- compute_PCA(unitvar, meta_df)
 # make sure to use right input data (samples =rows, genes=cols)
 out2 <- compute_PCA(t(assay(train_vst)), meta_df)
 out3 <- compute_PCA(log2_scaled, meta_df)
 
+
+print("computing umaps")
+umap1 <- compute_UMAP(unitvar, meta_df, 42)
+print("umap1 done")
+umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
+umap3 <- compute_UMAP(log2_scaled, meta_df, 42)
+print("umap done")
+
 # free space
-rm(sexpr, expr, texpr, log2_scaled,  unitvar)
+rm(sexpr, expr, texpr, log2_scaled,  unitvar, log2_scaled)
+
+
 
 ########################## PCA COLORS ##########################################
 # use annotations of liver metadata
@@ -213,67 +250,95 @@ color_list <- list("Sample_type"= sample_type_colors,
                     "Survival_time"=survival_colors,
                     "Tumor_stage"=tumor_stage,
                     "Icd10"=icd10_colors)
+print(color_list$Sample_type)
 
-################################### PLOTTING FUNCTION ##############################################
-
-pca_plotly_function <- function(pcx, pcy, scaling_method, colorby){
+plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorby){
   
   if (scaling_method == "unitvar"){
-    df_out <- out1$df_pca
-    explained_variance_ratio = out1$evar
+    if(plot_type == "PCA"){
+      df_out <- out1$df_pca
+      explained_variance_ratio = out1$evar
+    } else if(plot_type == "UMAP"){
+      df_out <- umap1$df_umap
+    }
   }
   if (scaling_method == "vst"){
-    df_out <- out2$df_pca
-    explained_variance_ratio = out2$evar
+    if(plot_type == "PCA"){
+      df_out <- out2$df_pca
+      explained_variance_ratio = out2$evar
+    } else if(plot_type == "UMAP"){
+      df_out <- umap2$df_umap
+    }
   }
   if (scaling_method == "log"){
-    df_out <- out3$df_pca
-    explained_variance_ratio = out3$evar
+    if(plot_type == "PCA"){
+      df_out <- out3$df_pca
+      explained_variance_ratio = out3$evar
+    } else if(plot_type == "UMAP"){
+      df_out <- umap3$df_umap
+    }
+    
   }
-
-  pal <- color_list[[paste(colorby)]]
-  pc1 <- paste0("PC",pcx)
-  pc2 <- paste0("PC",pcy)
   
+  pal <- color_list[[paste(colorby)]]
+    
   tx <- highlight_key(df_out, ~row.names(df_out), "Select a sample")
+  
+  if(plot_type == "PCA"){
+    dim1 <- paste0("PC", pcx, " - " , round(explained_variance_ratio[pcx], 2), " %")
+    dim2 <- paste0("PC", pcy, " - " , round(explained_variance_ratio[pcy], 2), " %")
+  }
+  else if(plot_type == "UMAP"){
+    dim1 <- paste0("UMAP1")
+    dim2 <- paste0("UMAP2")
+  }
   
   fig <- plot_ly(type="scatter", mode= "markers", colors=pal) 
   fig <- fig %>% add_trace(data=tx, x = tx$data()[,pcx], y = tx$data()[,pcy], color = tx$data()[,colorby],
-              text = row.names(df_out),
-              hovertemplate = paste("Sample:", row.names(df_out), 
-                                    "\nProject:", df_out$Project, 
-                                    "\nSex:", df_out$Sex, 
-                                    "\nAge:", df_out$Age_at_index,
-                                    "\nPrimary diagnosis:", df_out$Primary_diagnosis,
-                                    "\nSurvival time:", df_out$Survival_time,
-                                    "\nTumor stage:", df_out$Tumor_stage,
-                                    '<extra></extra>')) %>% highlight_key(row.names(df_out)) %>%
-                                    highlight(on = "plotly_click", off = "plotly_doubleclick") 
-
-    fig <- fig %>% layout(title= list(text = "", xanchor="right", yanchor="top", pad=list(b=50, t=20)), 
-                          list(title=list(text=colorby)),
-                            xaxis = list(title = list(text =paste0("PC", pcx, " - " , round(explained_variance_ratio[pcx], 2), " %"))),
-                            yaxis = list(title = list(text =paste0("PC", pcy, " - " , round(explained_variance_ratio[pcy], 2), " %"))))
-    return(fig)
+                            text = row.names(df_out),
+                            hovertemplate = paste("Sample:", row.names(df_out), 
+                                                  "\nProject:", df_out$Project, 
+                                                  "\nSex:", df_out$Sex, 
+                                                  "\nAge:", df_out$Age_at_index,
+                                                  "\nPrimary diagnosis:", df_out$Primary_diagnosis,
+                                                  "\nSurvival time:", df_out$Survival_time,
+                                                  "\nTumor stage:", df_out$Tumor_stage,
+                                                  '<extra></extra>')) %>% highlight_key(row.names(df_out)) %>%
+    highlight(on = "plotly_click", off = "plotly_doubleclick") 
+  
+  fig <- fig %>% layout(title= list(text = plot_type, xanchor="left", x=0.1), 
+                        list(title=list(text=colorby)),
+                        xaxis = list(title = list(text=dim1)),
+                        yaxis = list(title = list(text=dim2)))
+  return(fig)
 }
 
-
-# only running in interactive mode and not in shiny! replaced by plotlyProxy
-plotly_add_trace <- function(fig, pca_testdata, pcx, pcy, colorby){
+plotly_add_trace <- function(fig, testdata, pcx, pcy, colorby){
   
-  tx2 <- highlight_key(pca_testdata, ~row.names(pca_testdata))
+  tx2 <- highlight_key(testdata, ~row.names(testdata))
   
   fig <- fig %>%
-  add_trace(data=tx2, x = tx2$data()[,pcx], y = tx2$data()[,pcy], color = tx2$data()[,colorby],
-            hovertemplate = paste("Sample:", row.names(pca_testdata),'<extra></extra>'),
-            marker=list(color="#323232")
-  ) %>%
+    add_trace(data=tx2, x = tx2$data()[,pcx], y = tx2$data()[,pcy], color = tx2$data()[,colorby],
+              hovertemplate = paste("Sample:", row.names(testdata),'<extra></extra>'),
+              marker=list(color="#323232")
+    ) %>%
     highlight(on = "plotly_click", off = "plotly_doubleclick")
   fig
 }
+print("loaded function to plot")
+
+#dummy <-  read.table("/Users/susanne/Documents/code/r_projects/anovaget_app/data/dummy_liver_featureCounts.tsv", sep="\t", header=TRUE)
+#umap.out_pp <- preProcessTestData(dummy, pp_nvz, train_dispersionFunc, pp_sc)
+#umap.out_project <- projectTestData("UMAP", umap.out_pp, "unitvar", colnames(meta_df))
+#umap.out_project[is.na(umap.out_project)] <- "not_available"
+#umap_fig <- umap_plotly_function("unitvar", "Sample_type")
+
+#plotly_add_trace(umap_fig, umap.out_project, 1, 2, "Sample_type")
+#umap_not_scaled <- compute_UMAP(train_expr, meta_df, 42)
+#umap_plotly_function("none", "Sample_type")
+#umap_plotly_function("none", "Project")
 
 
-############################################ UI ####################################################
 
 # Example of UI with fluidPage
 ui <- fluidPage(
@@ -283,20 +348,20 @@ ui <- fluidPage(
     
   sidebarLayout(
       
-    # Sidebar with a dropdown menus
+    # Sidebar with a slider input
     sidebarPanel(
-      selectInput("plot_type", "Plot type", 
-                  c("PCA"="pca", "UMAP"="umap")),
       br(),
       selectInput("meta", "Color by:",
                           names(metadata)[5:length(names(metadata))],
                           selected="Sample_type"), 
       br(),
-      selectInput("scaling", "Choose a method for scaling",
+      selectInput("scaling", "Choose a method for scaling:",
                     c("Unit variance"="unitvar", "VST"="vst", "Log"="log"),
                     selected="Unit variance"),
-      numericInput("pcx", "Principal Component x-axis:", 1, min=1, max=10, step=1),
-      numericInput("pcy", "Principal Component y-axis:", 2, min=1, max=10, step=1),
+      wellPanel(h5("PCA options:"),
+      numericInput("pcx", "Principal component on x-axis:", 1, min=1, max=10, step=1),
+      numericInput("pcy", "Principal omponent on y-axis:", 2, min=1, max=10, step=1)
+      ),
       # Horizontal line ----
       tags$hr(),
       fileInput("upload", NULL, multiple=F, width="100%",
@@ -306,38 +371,46 @@ ui <- fluidPage(
       tags$hr()
     ),
       
-    # Show a PCA plot
+    # Show a plot of the generated distribution
     mainPanel(
       plotlyOutput("pcaPlot"),
-      br(),
-      # optionally add preview of user data in table format
+      tags$hr(),
+      plotlyOutput("umapPlot"),
       tableOutput("uploadFile")
     )
   )
 )
-
-########################################## SERVER FUNCTION #########################################
-
-# Server logic
-server <- function(input, output, session) {    
+  
+  # Server logic
+server <- function(input, output, session) {
 
       metaselect <- reactive(input$meta)
       scale_method <- reactive(input$scaling)
       pcx <- reactive(input$pcx)
       pcy <- reactive(input$pcy)
-
-      # pca plot training data
+      
       output$pcaPlot <- renderPlotly({
         
-        fig <- pca_plotly_function(
+        pca_fig <- plotly_plotting_function(
+            "PCA",
             pcx(),
             pcy(),
             scaling_method=scale_method(),
             colorby=metaselect()
           )
       })
+      
+      output$umapPlot <- renderPlotly({
+        
+        umap_fig <- plotly_plotting_function(
+          "UMAP",
+          1,
+          2,
+          scaling_method=scale_method(),
+          colorby=metaselect()
+        )
+      })
 
-      # user data processed upon upload
       ext_data <- reactive({
       req(input$upload)
       ext <- tools::file_ext(input$upload$name)
@@ -345,31 +418,39 @@ server <- function(input, output, session) {
       df <- read.table(input$upload$datapath, sep = "\t", header=T)
       
       out_pp <- preProcessTestData(df, pp_nvz, train_dispersionFunc, pp_sc)
-      out_project <- projectTestData(out_pp, scale_method(), colnames(meta_df))
-      out_project[is.na(out_project)] <- "not_available"
-      return(out_project)
+      return(out_pp)
     })
 
-      # if user data available, update pca plot
       observeEvent(input$Add,{
+      out = ext_data()
+      pca_df <- projectTestData("PCA", out, scale_method(), colnames(meta_df))
+      pca_df[is.na(pca_df)] <- "not_available"
+      
+      umap_df <- projectTestData("UMAP", out, scale_method(), colnames(meta_df))
+      umap_df[is.na(umap_df)] <- "not_available"
 
-        out = ext_data()
-        df <- projectTestData(out, scale_method(), colnames(meta_df))
-        df[is.na(df)] <- "not_available"
-
-        tx2 <- highlight_key(df, ~row.names(df)) 
-        plotlyProxy("pcaPlot", session) %>%
-          plotlyProxyInvoke("addTraces", x=tx2$data()[,pcx()], y=tx2$data()[,pcy()], color=tx2$data()[,metaselect()],
-                          type="scatter", mode="markers", name=tx2$data()[,metaselect()][1],
-                          hovertemplate = paste("Sample:", row.names(df),'<extra></extra>'),
+      tx_pca <- highlight_key(pca_df, ~row.names(pca_df)) 
+      plotlyProxy("pcaPlot", session) %>%
+        plotlyProxyInvoke("addTraces", x=tx_pca$data()[,pcx()], y=tx_pca$data()[,pcy()], color=tx_pca$data()[,metaselect()],
+                          type="scatter", mode="markers", name=tx_pca$data()[,metaselect()][1],
+                          hovertemplate = paste("Sample:", row.names(pca_df),'<extra></extra>'),
                           marker=list(color="#323232")) %>%
         highlight(on = "plotly_click", off = "plotly_doubleclick")
+      
+      
+      tx_umap <- highlight_key(umap_df, ~row.names(umap_df)) 
+      plotlyProxy("umapPlot", session) %>%
+        plotlyProxyInvoke("addTraces", x=tx_umap$data()[,1], y=tx_umap$data()[,2], color=tx_umap$data()[,metaselect()],
+                          type="scatter", mode="markers", name=tx_umap$data()[,metaselect()][1],
+                          hovertemplate = paste("Sample:", row.names(umap_df),'<extra></extra>'),
+                          marker=list(color="#323232")) %>%
+        highlight(on = "plotly_click", off = "plotly_doubleclick")
+      
+      
       })
 }
 
-
-
-########################################### RUN APP #################################################
-
-# Complete app with UI and server components
+    
+  
+  # Complete app with UI and server components
 shinyApp(ui, server)
