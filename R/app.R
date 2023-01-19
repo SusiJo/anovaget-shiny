@@ -72,7 +72,7 @@ compute_PCA <- function(x, colData){
 }
 
 compute_UMAP <- function(x, colData, rstate){
-  umap_obj <- umap(x, random_state=rstate, n_neighbors=30, metric="manhattan") #method="umap-learn", 
+  umap_obj <- umap(x, method="umap-learn", random_state=rstate, n_neighbors=30) #, metric="mahalanobis"
   
   df_umap <- as.data.frame(umap_obj$layout)
   df_umap <- cbind(df_umap, colData)
