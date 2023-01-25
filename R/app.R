@@ -180,7 +180,7 @@ meta_df <- mutate_if(meta_df, is.character, as.factor)
 # DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
 # running DESeq makes the dispersionFunction available for VST transformation
 # count data: rows=genes,cols=samples
-#dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
+# dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
                     #colData = meta_df,
                     #design = ~ 1) # no design
 #dds_train <- DESeq(dds_train)
@@ -327,18 +327,8 @@ plotly_add_trace <- function(fig, testdata, pcx, pcy, colorby){
 }
 print("loaded function to plot")
 
-#dummy <-  read.table("/Users/susanne/Documents/code/r_projects/anovaget_app/data/dummy_liver_featureCounts.tsv", sep="\t", header=TRUE)
-#umap.out_pp <- preProcessTestData(dummy, pp_nvz, train_dispersionFunc, pp_sc)
-#umap.out_project <- projectTestData("UMAP", umap.out_pp, "unitvar", colnames(meta_df))
-#umap.out_project[is.na(umap.out_project)] <- "not_available"
-#umap_fig <- umap_plotly_function("unitvar", "Sample_type")
 
-#plotly_add_trace(umap_fig, umap.out_project, 1, 2, "Sample_type")
-#umap_not_scaled <- compute_UMAP(train_expr, meta_df, 42)
-#umap_plotly_function("none", "Sample_type")
-#umap_plotly_function("none", "Project")
-
-
+############################################ UI ####################################################
 
 # Example of UI with fluidPage
 ui <- fluidPage(
@@ -380,6 +370,8 @@ ui <- fluidPage(
     )
   )
 )
+
+########################################## SERVER FUNCTION #########################################
   
   # Server logic
 server <- function(input, output, session) {
@@ -450,7 +442,7 @@ server <- function(input, output, session) {
       })
 }
 
-    
+########################################### RUN APP #################################################
   
   # Complete app with UI and server components
 shinyApp(ui, server)
