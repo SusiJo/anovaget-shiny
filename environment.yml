@@ -1,0 +1,23 @@
+name: anovaget-shiny-env
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.10
+  - umap-learn
+  - r-base=4.2.1
+  - r-plotly
+  - r-shiny
+  - bioconductor-deseq2
+  - r-stringr
+  - r-dplyr
+  - r-reticulate
+  - r-crosstalk
+  - r-gapminder
+  - r-rcolorbrewer
+  - bioconductor-summarizedexperiment
+  - r-ggplot2
+  - r-caret
+  - r-umap
+prefix: ~/miniconda3/envs/anovaget-shiny-env
