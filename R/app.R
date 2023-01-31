@@ -11,6 +11,10 @@ library(DESeq2)
 library(crosstalk)
 library(umap)
 library(reticulate)
+library(DT)
+library(shinyjs)
+library(shinybusy)
+library(shinyBS)
 print("starting script")
 
 # shinyOptions(maxUploadSize=10000)
@@ -53,12 +57,21 @@ scaling_method <- function(mat, method){
     # add pseudocounts to avoid -INF 
     scaled <- apply(mat, 2, function(x) log2(x+1))
   }
+    if(method == "MinMax"){
+    pp <- preProcess(mat, method="range")
+    scaled <- predict(pp, mat)
+  }
   return(scaled)
 }
 
 
-compute_PCA <- function(x, colData){
-  pca <- prcomp(x, center=T, retx=T, scale=T)
+compute_PCA <- function(x, colData, scaling_method){
+  if(scaling_method=="unitvar"){
+    pca <- prcomp(x, center=T, retx=T, scale.=T)
+  }
+  else {
+    pca <- prcomp(x, center=T, retx=T)
+  }
   explained_variance_ratio <- summary(pca)[["importance"]]['Proportion of Variance',]
   explained_variance_ratio <- 100 * explained_variance_ratio
   
@@ -93,6 +106,8 @@ preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc
   
   test_sc <- predict(preProc_train_sc, test_expr)
   test_log2 <- apply(test_expr, 2, function(x) log2(x+1))
+  pp_minmax <- preProcess(test_expr, method="range")
+  test_minmax <- predict(pp_minmax, test_expr)
   
   dds_test <- DESeqDataSetFromMatrix(countData = t(test_expr),
                                       colData=as.data.frame(colnames(testdata)),
@@ -106,7 +121,7 @@ preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc
   
   #rm(dds_test, testdata, testdata_df, test_expr)
   
-  output=list("test_vst"=test_vst, "test_sc"=test_sc, "test_log2"=test_log2)
+  output=list("test_vst"=test_vst, "test_sc"=test_sc, "test_log2"=test_log2, "test_minmax"=test_minmax)
   
   return(output)
 }
@@ -134,6 +149,14 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
       train_obj <- out3$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap3$umap_obj
+    }
+  }
+  if (scaling_method == "minmax") {
+    testdata <- preProc_output$test_minmax
+    if(plot_type == "PCA"){
+      train_obj <- out4$pca_obj
+    } else if(plot_type == "UMAP"){
+      train_obj <- umap4$umap_obj
     }
   }
 
@@ -198,26 +221,37 @@ train_sc <- predict(pp_sc, train_expr)
 #####################  APPLY FUNCTIONS ##############################
 
 # apply scaling
-print("scaling matrices")
-unitvar <- scaling_method(train_expr, "Unit variance")
-log2_scaled <- scaling_method(train_expr, "Log")
+#print("scaling matrices")
+#unitvar <- scaling_method(train_expr, "Unit variance")
+#log2_scaled <- scaling_method(train_expr, "Log")
+#minmax <- scaling_method(train_expr, "MinMax")
 
-print("computing pcas")
-out1 <- compute_PCA(unitvar, meta_df)
-# make sure to use right input data (samples =rows, genes=cols)
-out2 <- compute_PCA(t(assay(train_vst)), meta_df)
-out3 <- compute_PCA(log2_scaled, meta_df)
+#print("computing pcas")
+#out1 <- compute_PCA(unitvar, meta_df, "unitvar")
+## make sure to use right input data (samples =rows, genes=cols)
+#out2 <- compute_PCA(t(assay(train_vst)), meta_df, "vst")
+#out3 <- compute_PCA(log2_scaled, meta_df, "log")
+#out4 <- compute_PCA(minmax, meta_df, "minmax")
 
+#pca_results <- list("pca_unitvar"=out1, "pca_vst"=out2, "pca_log"=out3, "pca_minmax"=out4)
+#save(pca_results, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results.RData")
+load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results.RData")
 
-print("computing umaps")
-umap1 <- compute_UMAP(unitvar, meta_df, 42)
-print("umap1 done")
-umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
-umap3 <- compute_UMAP(log2_scaled, meta_df, 42)
-print("umap done")
+#print("computing umaps")
+#umap1 <- compute_UMAP(unitvar, meta_df, 42)
+#print("umap1 done")
+#umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
+#umap3 <- compute_UMAP(log2_scaled, meta_df, 42)
+#umap4 <- compute_UMAP(minmax, meta_df, 42)
+#print("umap done")
+
+#umap_results <- list("umap_unitvar"=umap1, "umap_vst"=umap2, "umap_log"=umap3, "umap_minmax"=umap4)
+#save(umap_results, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/umap_results.RData")
+load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/umap_results.RData")
+
 
 # free space
-rm(sexpr, expr, texpr, log2_scaled,  unitvar, log2_scaled)
+rm(sexpr, expr, texpr, log2_scaled,  unitvar, minmax)
 
 
 
@@ -256,28 +290,35 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
   
   if (scaling_method == "unitvar"){
     if(plot_type == "PCA"){
-      df_out <- out1$df_pca
-      explained_variance_ratio = out1$evar
+      df_out <- pca_results$pca_unitvar$df_pca
+      explained_variance_ratio = pca_results$pca_unitvar$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap1$df_umap
+      df_out <- umap_results$umap_unitvar$df_umap
     }
   }
   if (scaling_method == "vst"){
     if(plot_type == "PCA"){
-      df_out <- out2$df_pca
-      explained_variance_ratio = out2$evar
+      df_out <- pca_results$pca_vst$df_pca
+      explained_variance_ratio = pca_results$pca_vst$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap2$df_umap
+      df_out <- umap_results$umap_vst$df_umap
     }
   }
   if (scaling_method == "log"){
     if(plot_type == "PCA"){
-      df_out <- out3$df_pca
-      explained_variance_ratio = out3$evar
+      df_out <- pca_results$pca_log$df_pca
+      explained_variance_ratio = pca_results$pca_log$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap3$df_umap
+      df_out <- umap_results$umap_log$df_umap
+    }    
+  }
+  if (scaling_method == "minmax"){
+    if(plot_type == "PCA"){
+      df_out <- pca_results$pca_minmax$df_pca
+      explained_variance_ratio = pca_results$pca_minmax$evar
+    } else if(plot_type == "UMAP"){
+      df_out <- umap_results$umap_minmax$df_umap
     }
-    
   }
   
   pal <- color_list[[paste(colorby)]]
@@ -332,7 +373,9 @@ print("loaded function to plot")
 
 # Example of UI with fluidPage
 ui <- fluidPage(
-    
+
+  useShinyjs(), 
+  add_busy_spinner(spin = "fading-circle"),  
   # Application title
   titlePanel("Anovaget transcriptomics"),
     
@@ -346,7 +389,7 @@ ui <- fluidPage(
                           selected="Sample_type"), 
       br(),
       selectInput("scaling", "Choose a method for scaling:",
-                    c("Unit variance"="unitvar", "VST"="vst", "Log"="log"),
+                    c("Unit variance"="unitvar", "VST"="vst", "Log"="log", "MinMax"="minmax"),
                     selected="Unit variance"),
       wellPanel(h5("PCA options:"),
       numericInput("pcx", "Principal component on x-axis:", 1, min=1, max=10, step=1),
@@ -354,11 +397,17 @@ ui <- fluidPage(
       ),
       # Horizontal line ----
       tags$hr(),
+      h5("Upload user data"),
       fileInput("upload", NULL, multiple=F, width="100%",
                 accept = c(".tsv"), buttonLabel="TSV"),
-      actionButton("Add", "Add user data"),
+      actionButton("Add", "Click to add user data in plots"),
+      bsTooltip(id = "Add", title = "Please input a  raw gene-sample expression matrix", 
+                placement = "bottom", trigger = "hover"),
       # Horizontal line ----
-      tags$hr()
+      tags$hr(),
+      checkboxGroupInput("show_vars", "Select variables to show:",
+                          names(metadata)[3:length(names(metadata))], 
+                          selected = names(metadata)[3:length(names(metadata))])
     ),
       
     # Show a plot of the generated distribution
@@ -366,9 +415,11 @@ ui <- fluidPage(
       plotlyOutput("pcaPlot"),
       tags$hr(),
       plotlyOutput("umapPlot"),
-      tableOutput("uploadFile")
-    )
-  )
+      br(),
+      tags$hr(),
+      wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("trainingMetadata"), 
+                      style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))
+      ))
 )
 
 ########################################## SERVER FUNCTION #########################################
@@ -437,8 +488,24 @@ server <- function(input, output, session) {
                           hovertemplate = paste("Sample:", row.names(umap_df),'<extra></extra>'),
                           marker=list(color="#323232")) %>%
         highlight(on = "plotly_click", off = "plotly_doubleclick")
-      
-      
+      })
+
+      # TAB METADATA
+    metadata_table = meta_df[1:nrow(meta_df),3:ncol(meta_df)]
+    output$trainingMetadata <- DT::renderDataTable({
+      DT::datatable(metadata_table[, input$show_vars, drop = FALSE], 
+                    fillContainer = FALSE,
+                    options = list(crollX = TRUE,
+                                    autoWidth=TRUE, 
+                                    columnDefs = list(
+                                      list(orderSequence = c("desc", "asc"), targets = "_all"),
+                                      list(className = "dt-center", targets = "_all")
+                                    ),
+                                    processing = FALSE,
+                                    pageLength = 5,
+                                    lengthMenu = list(c(5, 10, 25, 50, -1), c("5", "10", "25", "50", "All"))
+                      )
+                  )  
       })
 }
 

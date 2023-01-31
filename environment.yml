@@ -20,4 +20,9 @@ dependencies:
   - r-ggplot2
   - r-caret
   - r-umap
+  - r-shinybusy
+  - r-shinybs
+  - r-dt
 prefix: ~/miniconda3/envs/anovaget-shiny-env
+
+#  mamba env update -n anovaget-shiny-env --file environment.yml
