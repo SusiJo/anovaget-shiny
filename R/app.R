@@ -221,45 +221,30 @@ texpr <- t(expr)
 metadata <- colData(liver_expr)
 meta_df <- as.data.frame(metadata)
 
+
+
+#####################  APPLY FUNCTIONS ##############################
+# load scaling functions
 load( "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_preproc.RData")
 train_expr <- predict(preproc_output$pp_nvz, texpr)
 
+# load dds object for VST transformation
 load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object_new_ids.RData")
 train_dispersionFunc <- dispersionFunction(dds_train) 
 train_vst <- vst(dds_train, blind=T) 
-
-# pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
 train_sc <- predict(preproc_output$pp_sc, train_expr)
 
-#####################  APPLY FUNCTIONS ##############################
 
-# apply scaling
-#print("scaling matrices")
-#unitvar <- scaling_method(train_expr, "Unit variance")
-#log2_scaled <- scaling_method(train_expr, "Log")
-#minmax <- scaling_method(train_expr, "MinMax")
+# load scaled data
 load( "/Users/susanne/Documents/code/r_projects/anovaget_app/data/scaled_outputs.RData")
+# scaled_outputs$unitvar, scaled_outputs$log2_scaled, scaled_outputs$minmax
 
-#print("computing pcas")
-#out1 <- compute_PCA(unitvar, meta_df, "unitvar")
-## make sure to use right input data (samples =rows, genes=cols)
-#out2 <- compute_PCA(t(assay(train_vst)), meta_df, "vst")
-#out3 <- compute_PCA(log2_scaled, meta_df, "log")
-#out4 <- compute_PCA(minmax, meta_df, "minmax")
-
-#pca_results <- list("pca_unitvar"=out1, "pca_vst"=out2, "pca_log"=out3, "pca_minmax"=out4)
-#save(pca_results, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results.RData")
 load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results_new_ids.RData")
 
-
-#print("computing umaps")
-
 umap1 <- compute_UMAP(scaled_outputs$unitvar, meta_df, 42)
-#print("umap1 done")
 umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
 umap3 <- compute_UMAP(scaled_outputs$log2_scaled, meta_df, 42)
 umap4 <- compute_UMAP(scaled_outputs$minmax, meta_df, 42)
-print("umap done")
 
 # free space
 rm(sexpr, expr, texpr, log2_scaled,  unitvar, minmax)
@@ -345,7 +330,7 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
     dim2 <- paste0("UMAP2")
   }
   
-  # dynamically change marker size when row is selected in datatable
+  # dynamically change marker size, color, border and opacity when row is selected in datatable
   sorted_list <- df_out[order(df_out[,colorby]), ]
   h_marker <- ifelse(row.names(sorted_list) %in% row_id, 20, 10)
   h_border <- ifelse(row.names(sorted_list) %in% row_id, 'rgb(0,0,0)', 'rgb(255,255,255)')
@@ -378,7 +363,7 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
 
 ############################################ UI ####################################################
 
-# Example of UI with fluidPage
+# UI with fluidPage
 ui <- fluidPage(
 
   useShinyjs(), 
@@ -401,7 +386,7 @@ ui <- fluidPage(
       wellPanel(h5("PCA options:"),
       numericInput("pcx", "Principal component on x-axis:", 1, min=1, max=10, step=1),
       numericInput("pcy", "Principal omponent on y-axis:", 2, min=1, max=10, step=1)
-      ),
+        ),
       # Horizontal line ----
       tags$hr(),
       h5("Upload user data"),
@@ -415,7 +400,7 @@ ui <- fluidPage(
       checkboxGroupInput("show_vars", "Select variables to show:",
                           names(metadata)[3:length(names(metadata))], 
                           selected = names(metadata)[3:length(names(metadata))])
-    ),
+      ),
       
     # Show a plot of the generated distribution
     mainPanel(width=10,
@@ -426,7 +411,8 @@ ui <- fluidPage(
                             plotlyOutput("pcaPlot"),
                             tags$hr(),
                             plotlyOutput("umapPlot"))))
-            ))
+    )
+  )
 )
 
 ########################################## SERVER FUNCTION #########################################
@@ -452,8 +438,10 @@ server <- function(input, output, session) {
       )  
       })
   
+  # value to store datatable id
   id_sel <- reactiveVal()
   
+  # observe if row in datatable is selected
   observe({
     idx <- input$trainingMetadata_rows_selected
     id_sel <- row.names(meta_df)[idx]
@@ -463,42 +451,41 @@ server <- function(input, output, session) {
   })
   
   
-  # clear the set of cars when a double-click occurs
+  # clear the set of selected datapoints when a double-click occurs
   observeEvent(event_data("plotly_doubleclick"), {
     id_sel(NULL)
   })
   
-
-      metaselect <- reactive(input$meta)
-      scale_method <- reactive(input$scaling)
-      pcx <- reactive(input$pcx)
-      pcy <- reactive(input$pcy)
+  metaselect <- reactive(input$meta)
+  scale_method <- reactive(input$scaling)
+  pcx <- reactive(input$pcx)
+  pcy <- reactive(input$pcy)
       
-      output$pcaPlot <- renderPlotly({
+  output$pcaPlot <- renderPlotly({
         
-        pca_fig <- plotly_plotting_function(
-            "PCA",
-            pcx(),
-            pcy(),
-            scaling_method=scale_method(),
-            colorby=metaselect(),
-            row_id=id_sel()
-          )
-      })
+    plotly_plotting_function(
+      "PCA",
+      pcx(),
+      pcy(),
+      scaling_method=scale_method(),
+      colorby=metaselect(),
+      row_id=id_sel()
+      )
+    })
       
-      output$umapPlot <- renderPlotly({
+    output$umapPlot <- renderPlotly({
         
-        umap_fig <- plotly_plotting_function(
-          "UMAP",
-          1,
-          2,
-          scaling_method=scale_method(),
-          colorby=metaselect(),
-          row_id=id_sel()
+      plotly_plotting_function(
+        "UMAP",
+        1, # umap in 2 just returns first 2 dimensions
+        2,
+        scaling_method=scale_method(),
+        colorby=metaselect(),
+        row_id=id_sel()
         )
-      })
+    })
 
-      ext_data <- reactive({
+    ext_data <- reactive({
       req(input$upload)
       ext <- tools::file_ext(input$upload$name)
       validate(need(ext == "tsv", "Invalid file. Please upload a .tsv file"))
@@ -508,7 +495,7 @@ server <- function(input, output, session) {
       return(out_pp)
     })
 
-      observeEvent(input$Add,{
+    observeEvent(input$Add,{
       out = ext_data()
       pca_df <- projectTestData("PCA", out, scale_method(), colnames(meta_df))
       pca_df[is.na(pca_df)] <- "not_available"
@@ -516,6 +503,7 @@ server <- function(input, output, session) {
       umap_df <- projectTestData("UMAP", out, scale_method(), colnames(meta_df))
       umap_df[is.na(umap_df)] <- "not_available"
 
+      # update plots based on user input
       tx_pca <- highlight_key(pca_df, ~row.names(pca_df)) 
       plotlyProxy("pcaPlot", session) %>%
         plotlyProxyInvoke("addTraces", x=tx_pca$data()[,pcx()], y=tx_pca$data()[,pcy()], color=tx_pca$data()[,metaselect()],
