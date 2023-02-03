@@ -17,7 +17,6 @@ library(shinybusy)
 library(shinyBS)
 print("starting script")
 
-# shinyOptions(maxUploadSize=10000)
 options(shiny.maxRequestSize = 30*1024^2)
 options(warn=-1)
 
@@ -94,11 +93,6 @@ compute_UMAP <- function(x, colData, rstate){
   return(out)
 }
 
-# functions for colors
-my.max <- function(x) ifelse( !all(is.na(x)), max(x, na.rm=T), NA)
-my.min <- function(x) ifelse( !all(is.na(x)), min(x, na.rm=T), NA)
-
-
 preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc_train_sc){
   testdata <- parseInput(inputfile)
   testdata_df <- t(testdata)
@@ -130,7 +124,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "unitvar") {
     testdata <- preProc_output$test_sc
     if(plot_type == "PCA"){
-      train_obj <- out1$pca_obj
+      train_obj <-  pca_results$pca_unitvar$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap1$umap_obj
     }
@@ -138,7 +132,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "vst"){
     testdata <- preProc_output$test_vst
     if(plot_type == "PCA"){
-      train_obj <- out2$pca_obj
+      train_obj <- pca_results$pca_vst$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap2$umap_obj
     }
@@ -146,7 +140,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "log") {
     testdata <- preProc_output$test_log2
     if(plot_type == "PCA"){
-      train_obj <- out3$pca_obj
+      train_obj <- pca_results$pca_log$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap3$umap_obj
     }
@@ -154,7 +148,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "minmax") {
     testdata <- preProc_output$test_minmax
     if(plot_type == "PCA"){
-      train_obj <- out4$pca_obj
+      train_obj <- pca_results$pca_minmax$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap4$umap_obj
     }
@@ -180,43 +174,62 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
 
 ################################## READ DATA #################################
 
-load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_summarizedExperiment.RData")
-print("loaded summarized expr")
+# load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_summarizedExperiment.RData")
+# print("loaded summarized expr")
 
-# COUNT DATA
-gene_names <- rowData(sexpr)$X
-expr <- assays(sexpr)$counts
+# # COUNT DATA
+# gene_names <- rowData(sexpr)$X
+# expr <- assays(sexpr)$counts
+# texpr <- t(expr)
+
+# # PREPROCESSING DATA
+# # remove near zero variance genes
+# pp_nvz <- preProcess(texpr, method = c("nzv")) # 32163 genes
+# train_expr <- predict(pp_nvz, texpr)
+
+# # METADATA
+# metadata <- colData(sexpr)
+# meta_df <- as.data.frame(metadata)
+# meta_df$Treatment_Type <- (sub('\"TACE RFA\"', 'TACE+RFA', meta_df$Treatment_Type))
+# meta_df[meta_df == ''] <- 'not_available'
+# meta_df <- mutate_if(meta_df, is.character, as.factor)
+
+# # DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
+# # running DESeq makes the dispersionFunction available for VST transformation
+# # count data: rows=genes,cols=samples
+# # dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
+#                     #colData = meta_df,
+#                     #design = ~ 1) # no design
+# #dds_train <- DESeq(dds_train)
+# # save(dds_train, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object.RData")
+
+
+# load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_dds_object.RData")
+# print("loaded deseq obj")
+# train_dispersionFunc <- dispersionFunction(dds_train) 
+# train_vst <- vst(dds_train, blind=T) 
+
+# pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
+# train_sc <- predict(pp_sc, train_expr)
+
+load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_summarizedExperiment_harmonized.RData")
+gene_names <- rowData(liver_expr)$X
+expr <- assays(liver_expr)$counts
 texpr <- t(expr)
 
-# PREPROCESSING DATA
-# remove near zero variance genes
-pp_nvz <- preProcess(texpr, method = c("nzv")) # 32163 genes
-train_expr <- predict(pp_nvz, texpr)
-
 # METADATA
-metadata <- colData(sexpr)
+metadata <- colData(liver_expr)
 meta_df <- as.data.frame(metadata)
-meta_df$Treatment_Type <- (sub('\"TACE RFA\"', 'TACE+RFA', meta_df$Treatment_Type))
-meta_df[meta_df == ''] <- 'not_available'
-meta_df <- mutate_if(meta_df, is.character, as.factor)
 
-# DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
-# running DESeq makes the dispersionFunction available for VST transformation
-# count data: rows=genes,cols=samples
-# dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
-                    #colData = meta_df,
-                    #design = ~ 1) # no design
-#dds_train <- DESeq(dds_train)
-# save(dds_train, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object.RData")
+load( "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_preproc.RData")
+train_expr <- predict(preproc_output$pp_nvz, texpr)
 
-
-load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_dds_object.RData")
-print("loaded deseq obj")
+load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object_new_ids.RData")
 train_dispersionFunc <- dispersionFunction(dds_train) 
 train_vst <- vst(dds_train, blind=T) 
 
-pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
-train_sc <- predict(pp_sc, train_expr)
+# pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
+train_sc <- predict(preproc_output$pp_sc, train_expr)
 
 #####################  APPLY FUNCTIONS ##############################
 
@@ -225,6 +238,7 @@ train_sc <- predict(pp_sc, train_expr)
 #unitvar <- scaling_method(train_expr, "Unit variance")
 #log2_scaled <- scaling_method(train_expr, "Log")
 #minmax <- scaling_method(train_expr, "MinMax")
+load( "/Users/susanne/Documents/code/r_projects/anovaget_app/data/scaled_outputs.RData")
 
 #print("computing pcas")
 #out1 <- compute_PCA(unitvar, meta_df, "unitvar")
@@ -235,20 +249,17 @@ train_sc <- predict(pp_sc, train_expr)
 
 #pca_results <- list("pca_unitvar"=out1, "pca_vst"=out2, "pca_log"=out3, "pca_minmax"=out4)
 #save(pca_results, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results.RData")
-load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results.RData")
+load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results_new_ids.RData")
+
 
 #print("computing umaps")
-#umap1 <- compute_UMAP(unitvar, meta_df, 42)
+
+umap1 <- compute_UMAP(scaled_outputs$unitvar, meta_df, 42)
 #print("umap1 done")
-#umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
-#umap3 <- compute_UMAP(log2_scaled, meta_df, 42)
-#umap4 <- compute_UMAP(minmax, meta_df, 42)
-#print("umap done")
-
-#umap_results <- list("umap_unitvar"=umap1, "umap_vst"=umap2, "umap_log"=umap3, "umap_minmax"=umap4)
-#save(umap_results, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/umap_results.RData")
-load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/umap_results.RData")
-
+umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
+umap3 <- compute_UMAP(scaled_outputs$log2_scaled, meta_df, 42)
+umap4 <- compute_UMAP(scaled_outputs$minmax, meta_df, 42)
+print("umap done")
 
 # free space
 rm(sexpr, expr, texpr, log2_scaled,  unitvar, minmax)
@@ -286,14 +297,14 @@ color_list <- list("Sample_type"= sample_type_colors,
                     "Icd10"=icd10_colors)
 print(color_list$Sample_type)
 
-plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorby){
+plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorby, row_id){
   
   if (scaling_method == "unitvar"){
     if(plot_type == "PCA"){
       df_out <- pca_results$pca_unitvar$df_pca
       explained_variance_ratio = pca_results$pca_unitvar$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap_results$umap_unitvar$df_umap
+      df_out <- umap1$df_umap
     }
   }
   if (scaling_method == "vst"){
@@ -301,7 +312,7 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
       df_out <- pca_results$pca_vst$df_pca
       explained_variance_ratio = pca_results$pca_vst$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap_results$umap_vst$df_umap
+      df_out <- umap2$df_umap
     }
   }
   if (scaling_method == "log"){
@@ -309,7 +320,7 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
       df_out <- pca_results$pca_log$df_pca
       explained_variance_ratio = pca_results$pca_log$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap_results$umap_log$df_umap
+      df_out <- umap_3$df_umap
     }    
   }
   if (scaling_method == "minmax"){
@@ -317,7 +328,7 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
       df_out <- pca_results$pca_minmax$df_pca
       explained_variance_ratio = pca_results$pca_minmax$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap_results$umap_minmax$df_umap
+      df_out <- umap4$df_umap
     }
   }
   
@@ -334,9 +345,20 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
     dim2 <- paste0("UMAP2")
   }
   
+  # dynamically change marker size when row is selected in datatable
+  sorted_list <- df_out[order(df_out[,colorby]), ]
+  h_marker <- ifelse(row.names(sorted_list) %in% row_id, 20, 10)
+  h_border <- ifelse(row.names(sorted_list) %in% row_id, 'rgb(0,0,0)', 'rgb(255,255,255)')
+  h_opa <- ifelse(row.names(sorted_list) %in% row_id, 1, 0.8)
+  h_width <- ifelse(row.names(sorted_list) %in% row_id, 2, 1)
+
   fig <- plot_ly(type="scatter", mode= "markers", colors=pal) 
   fig <- fig %>% add_trace(data=tx, x = tx$data()[,pcx], y = tx$data()[,pcy], color = tx$data()[,colorby],
                             text = row.names(df_out),
+                            marker = list(size=h_marker, 
+                                          line = list(color = h_border,
+                                                    width = h_width),
+                                        opacity = h_opa),
                             hovertemplate = paste("Sample:", row.names(df_out), 
                                                   "\nProject:", df_out$Project, 
                                                   "\nSex:", df_out$Sex, 
@@ -354,21 +376,6 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
   return(fig)
 }
 
-plotly_add_trace <- function(fig, testdata, pcx, pcy, colorby){
-  
-  tx2 <- highlight_key(testdata, ~row.names(testdata))
-  
-  fig <- fig %>%
-    add_trace(data=tx2, x = tx2$data()[,pcx], y = tx2$data()[,pcy], color = tx2$data()[,colorby],
-              hovertemplate = paste("Sample:", row.names(testdata),'<extra></extra>'),
-              marker=list(color="#323232")
-    ) %>%
-    highlight(on = "plotly_click", off = "plotly_doubleclick")
-  fig
-}
-print("loaded function to plot")
-
-
 ############################################ UI ####################################################
 
 # Example of UI with fluidPage
@@ -382,7 +389,7 @@ ui <- fluidPage(
   sidebarLayout(
       
     # Sidebar with a slider input
-    sidebarPanel(
+    sidebarPanel(width = 2,
       br(),
       selectInput("meta", "Color by:",
                           names(metadata)[5:length(names(metadata))],
@@ -411,21 +418,56 @@ ui <- fluidPage(
     ),
       
     # Show a plot of the generated distribution
-    mainPanel(
-      plotlyOutput("pcaPlot"),
-      tags$hr(),
-      plotlyOutput("umapPlot"),
-      br(),
-      tags$hr(),
-      wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("trainingMetadata"), 
-                      style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))
-      ))
+    mainPanel(width=10,
+      fluidRow(
+        column(3, wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("trainingMetadata"), 
+                                style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))),
+        column(9, tabPanel("Plots",
+                            plotlyOutput("pcaPlot"),
+                            tags$hr(),
+                            plotlyOutput("umapPlot"))))
+            ))
 )
 
 ########################################## SERVER FUNCTION #########################################
   
   # Server logic
 server <- function(input, output, session) {
+
+  # TAB METADATA
+  metadata_table = meta_df[1:nrow(meta_df),3:ncol(meta_df)]
+  output$trainingMetadata <- DT::renderDataTable({
+    DT::datatable(metadata_table[, input$show_vars, drop = FALSE], 
+                  fillContainer = FALSE,
+                  options = list(crollX = TRUE,
+                                  autoWidth=TRUE, 
+                                  columnDefs = list(
+                                    list(orderSequence = c("desc", "asc"), targets = "_all"),
+                                    list(className = "dt-center", targets = "_all")
+                                  ),
+                                  processing = FALSE,
+                                  pageLength = 10,
+                                  lengthMenu = list(c(5, 10, 25, 50, -1), c("5", "10", "25", "50", "All"))
+                  )
+      )  
+      })
+  
+  id_sel <- reactiveVal()
+  
+  observe({
+    idx <- input$trainingMetadata_rows_selected
+    id_sel <- row.names(meta_df)[idx]
+    id_sel_old_new <- c(id_sel(), id_sel)
+    id_sel(unique(id_sel_old_new))
+    
+  })
+  
+  
+  # clear the set of cars when a double-click occurs
+  observeEvent(event_data("plotly_doubleclick"), {
+    id_sel(NULL)
+  })
+  
 
       metaselect <- reactive(input$meta)
       scale_method <- reactive(input$scaling)
@@ -439,7 +481,8 @@ server <- function(input, output, session) {
             pcx(),
             pcy(),
             scaling_method=scale_method(),
-            colorby=metaselect()
+            colorby=metaselect(),
+            row_id=id_sel()
           )
       })
       
@@ -450,7 +493,8 @@ server <- function(input, output, session) {
           1,
           2,
           scaling_method=scale_method(),
-          colorby=metaselect()
+          colorby=metaselect(),
+          row_id=id_sel()
         )
       })
 
@@ -460,7 +504,7 @@ server <- function(input, output, session) {
       validate(need(ext == "tsv", "Invalid file. Please upload a .tsv file"))
       df <- read.table(input$upload$datapath, sep = "\t", header=T)
       
-      out_pp <- preProcessTestData(df, pp_nvz, train_dispersionFunc, pp_sc)
+      out_pp <- preProcessTestData(df, preproc_output$pp_nvz, preproc_output$train_dispersionFunc, preproc_output$pp_sc)
       return(out_pp)
     })
 
@@ -490,23 +534,6 @@ server <- function(input, output, session) {
         highlight(on = "plotly_click", off = "plotly_doubleclick")
       })
 
-      # TAB METADATA
-    metadata_table = meta_df[1:nrow(meta_df),3:ncol(meta_df)]
-    output$trainingMetadata <- DT::renderDataTable({
-      DT::datatable(metadata_table[, input$show_vars, drop = FALSE], 
-                    fillContainer = FALSE,
-                    options = list(crollX = TRUE,
-                                    autoWidth=TRUE, 
-                                    columnDefs = list(
-                                      list(orderSequence = c("desc", "asc"), targets = "_all"),
-                                      list(className = "dt-center", targets = "_all")
-                                    ),
-                                    processing = FALSE,
-                                    pageLength = 5,
-                                    lengthMenu = list(c(5, 10, 25, 50, -1), c("5", "10", "25", "50", "All"))
-                      )
-                  )  
-      })
 }
 
 ########################################### RUN APP #################################################
