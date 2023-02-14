@@ -15,10 +15,44 @@ library(DT)
 library(shinyjs)
 library(shinybusy)
 library(shinyBS)
+library(shinyWidgets)
+library(RANN)
+library(comprehenr)
+
 print("starting script")
 
 options(shiny.maxRequestSize = 30*1024^2)
 options(warn=-1)
+
+##########################
+
+collapsibleAwesomeCheckboxGroupInput <- 
+  function(inputId, label, i, choices = NULL, selected = NULL,  
+            status = "primary", width = NULL){
+    input <- awesomeCheckboxGroup(inputId, label, choices = choices, 
+                                  selected = selected, width = width,
+                                  status = status)
+    checkboxes <- input[[3]][[2]][[3]][[1]]
+    id_btn <- paste0(inputId, "_btn")
+    id_div <- paste0(inputId, "_collapsible")
+    btn <- actionBttn(id_btn, "More...", color = "primary", size = "sm", 
+                      style = "minimal", icon = icon("collapse-up", lib = "glyphicon"))
+    collapsible <- div(id = id_div, class = "collapse")
+    collapsible$children <- checkboxes[(i+1):length(checkboxes)]
+    children <- c(checkboxes[1:i], list(btn), list(collapsible))
+    input[[3]][[2]][[3]][[1]] <- children
+    script <- sprintf('$(document).ready(function(){
+      $("#%s_btn").attr("data-target", "#%s_collapsible").attr("data-toggle", "collapse").css("margin-bottom", "11px");
+      $("#%s_collapsible").on("hide.bs.collapse", function(){
+        $("#%s_btn").html("<span class=\\\"glyphicon glyphicon-collapse-down\\\"></span> More...");
+      });
+      $("#%s_collapsible").on("show.bs.collapse", function(){
+        $("#%s_btn").html("<span class=\\\"glyphicon glyphicon-collapse-up\\\"></span> Less...");
+      });
+    });', inputId, inputId, inputId, inputId, inputId, inputId)
+    tagList(input, tags$script(HTML(script)))
+  }
+
 
 ### FUNCTIONS ############
 
@@ -162,7 +196,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   meta_test[is.na(meta_test)] = "not_available"
   meta_test$Age_at_index <- rep(NA, length(row.names(meta_test)))
   meta_test$Survival_time <- rep(NA, length(row.names(meta_test)))
-  meta_test$Tumor_stage <- rep(NA, length(row.names(meta_test)))
+  meta_test$Tumor_stage %>% replace_na('not_available')
   meta_test <- mutate_if(meta_test, is.character, as.factor)
   
   # df for projected testdata with metadata
@@ -171,6 +205,34 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   
   return(testdata_projected)
 }
+
+
+# function to compute nearest neighbors and return dataframe and hoverinfo for plot
+compute_NN <- function(scaling_method, test_pca, n){
+  
+  if (scaling_method == "unitvar") { train_pca <- pca_results$pca_unitvar$df_pca[,1:10] }
+  if (scaling_method == "vst") { train_pca <- pca_results$pca_vst$df_pca[,1:10] }
+  if (scaling_method == "log") { train_pca <- pca_results$pca_log$df_pca[,1:10] }
+  if (scaling_method == "minmax") { train_pca <- pca_results$pca_minmax$df_pca[,1:10] }
+  
+  nearest_neighbors <- nn2(train_pca, test_pca, k=n)
+  # data frame of rounded distances 
+  nmat <- nearest_neighbors$nn.idx
+  ndists <- apply(nearest_neighbors$nn.dist, 2, function(x) round(x,2))
+  # label 
+  neighbor_df <- data.frame(apply(nmat, 2, function(x) paste0("id", x)))
+  neighbor_df <- cbind(neighbor_df, ndists)
+  
+  # idx of neighbor
+  s <- rep(seq(1:n), 2)
+  # n1 n2, n..., dist1, dist2, ...
+  colnames(neighbor_df) <-  to_vec(for(i in 1:length(s)) ifelse(i<=n , paste0("n",s[i]), paste0("dist", s[i])))
+  row.names(neighbor_df) <- row.names(test_pca)
+  
+  return(neighbor_df)
+  
+}
+
 
 ################################## READ DATA #################################
 
@@ -220,6 +282,16 @@ texpr <- t(expr)
 # METADATA
 metadata <- colData(liver_expr)
 meta_df <- as.data.frame(metadata)
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "Hepatocellular carcinoma", "HCC"))
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "hepatocellular carcinoma", "HCC"))
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "Cholangiocarcinoma", "CCA"))
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "cholangiocarcinoma", "CCA"))
+meta_df <- as.data.frame(meta_df) 
+row.names(meta_df) <- row.names(metadata)
+meta_df$Age_at_index <- as.numeric(meta_df$Age_at_index)
+meta_df$Survival_time <- as.numeric(meta_df$Survival_time)
+meta_df$Tumor_stage <- meta_df$Tumor_stage %>% replace_na('not_available')
+meta_df <- mutate_if(meta_df, is.character, as.factor)
 
 
 
@@ -263,8 +335,8 @@ primary_site <- brewer.pal(length(unique(meta_df$Primary_site))+1, "Set1")
 age_colors <- brewer.pal(n=9, name="Blues")
 vital_status_colors <- brewer.pal(length(unique(meta_df$Vital_status))+1, "Set2")
 sex_colors <- c(female="#EF553B", male="#636EFA", "#000000")
-survival_colors <- brewer.pal(n=9, name="Greys")
-tumor_stage <- brewer.pal(length(unique(meta_df$Tumor_stage)), "Greys")
+survival_colors <- brewer.pal(n=9, name="Blues")
+tumor_stage <- brewer.pal(length(unique(meta_df$Tumor_stage))+1, "Set2")
 icd10_colors <- brewer.pal(length(unique(meta_df$Icd10))+1, "Set2")
 
 
@@ -280,7 +352,6 @@ color_list <- list("Sample_type"= sample_type_colors,
                     "Survival_time"=survival_colors,
                     "Tumor_stage"=tumor_stage,
                     "Icd10"=icd10_colors)
-print(color_list$Sample_type)
 
 plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorby, row_id){
   
@@ -305,7 +376,7 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
       df_out <- pca_results$pca_log$df_pca
       explained_variance_ratio = pca_results$pca_log$evar
     } else if(plot_type == "UMAP"){
-      df_out <- umap_3$df_umap
+      df_out <- umap3$df_umap
     }    
   }
   if (scaling_method == "minmax"){
@@ -370,12 +441,12 @@ ui <- fluidPage(
   add_busy_spinner(spin = "fading-circle"),  
   # Application title
   titlePanel("Anovaget transcriptomics"),
-    
+  br(),  
   sidebarLayout(
       
     # Sidebar with a slider input
     sidebarPanel(width = 2,
-      br(),
+      h3("Visualization options:"),
       selectInput("meta", "Color by:",
                           names(metadata)[5:length(names(metadata))],
                           selected="Sample_type"), 
@@ -389,31 +460,47 @@ ui <- fluidPage(
         ),
       # Horizontal line ----
       tags$hr(),
-      h5("Upload user data"),
+      h3("Upload user data:"),
       fileInput("upload", NULL, multiple=F, width="100%",
                 accept = c(".tsv"), buttonLabel="TSV"),
+      numericInput("kn", "Number of nearest neighbors to compute:", 1, min=1, max=10, step=1),
+      br(),
       actionButton("Add", "Click to add user data in plots"),
       bsTooltip(id = "Add", title = "Please input a  raw gene-sample expression matrix", 
-                placement = "bottom", trigger = "hover"),
+                placement = "bottom", trigger = "hover"),     
+      
       # Horizontal line ----
       tags$hr(),
-      checkboxGroupInput("show_vars", "Select variables to show:",
+      h3("Table options:"),
+      collapsibleAwesomeCheckboxGroupInput("show_vars", "Select variables to show:\n", 3,
                           names(metadata)[3:length(names(metadata))], 
                           selected = names(metadata)[3:length(names(metadata))])
       ),
       
-    # Show a plot of the generated distribution
+    # Show plots reduced dimensionality + tables
     mainPanel(width=10,
-      fluidRow(
-        column(3, wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("trainingMetadata"), 
-                                style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))),
-        column(9, tabPanel("Plots",
-                            plotlyOutput("pcaPlot"),
-                            tags$hr(),
-                            plotlyOutput("umapPlot"))))
-    )
-  )
-)
+              fluidRow(
+                column(6, plotlyOutput("pcaPlot")),
+                column(6, plotlyOutput("umapPlot"))
+              ),
+              br(),
+              tags$hr(),
+              tabsetPanel(type="tabs",
+                          tabPanel("Data", 
+                                    br(),
+                                    span(textOutput(outputId  = "tab1_text"), style="font-size: 20px; font-style: bold;"),
+                                    br(),
+                                    wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("trainingMetadata"), 
+                                        style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))),
+                          tabPanel("Neighbor Data", 
+                                    br(),
+                                    span(textOutput(outputId  = "tab2_text"), style="font-size: 20px; font-style: bold;"),
+                                    br(),
+                                    wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("neighbortable"), 
+                                                                  style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))))
+              
+              
+)))
 
 ########################################## SERVER FUNCTION #########################################
   
@@ -438,6 +525,11 @@ server <- function(input, output, session) {
       )  
       })
   
+  # text in tabsets
+  output$tab1_text <- renderText({"Metadata annotations from TCGA, ICGC and GTEx."})
+  output$tab2_text <- renderText({"Please upload a dataset to compute approximate nearest neighbors to TCGA, ICGC and GTEx data. Nearest Neighbors computed on first 10 Principal Components."})
+  
+
   # value to store datatable id
   id_sel <- reactiveVal()
   
@@ -460,6 +552,7 @@ server <- function(input, output, session) {
   scale_method <- reactive(input$scaling)
   pcx <- reactive(input$pcx)
   pcy <- reactive(input$pcy)
+  kn <- reactive(input$kn)
       
   output$pcaPlot <- renderPlotly({
         
@@ -495,11 +588,22 @@ server <- function(input, output, session) {
       return(out_pp)
     })
 
-    observeEvent(input$Add,{
+    observeEvent(input$Add,{      
+      output$tab2_text <- renderText({"Nearest neighbors are being computed."})
+
       out = ext_data()
+      # project testdata into PCA space
       pca_df <- projectTestData("PCA", out, scale_method(), colnames(meta_df))
       pca_df[is.na(pca_df)] <- "not_available"
-      
+
+      # compute nearest neighbors in PCA space with first 10 PCs
+      neighbor_df <- compute_NN(scale_method(), pca_df[,1:10], kn())
+      # render neighbor dataframe
+      output$neighbortable <-  DT::renderDataTable({ DT::datatable(neighbor_df) })
+      num_col <- ncol(neighbor_df)/2
+      output$tab2_text <- renderText({"Nearest Neighbors to TCGA, ICGC, GTEx data."})
+
+      # project testdata into UMAP space      
       umap_df <- projectTestData("UMAP", out, scale_method(), colnames(meta_df))
       umap_df[is.na(umap_df)] <- "not_available"
 
@@ -508,7 +612,9 @@ server <- function(input, output, session) {
       plotlyProxy("pcaPlot", session) %>%
         plotlyProxyInvoke("addTraces", x=tx_pca$data()[,pcx()], y=tx_pca$data()[,pcy()], color=tx_pca$data()[,metaselect()],
                           type="scatter", mode="markers", name=tx_pca$data()[,metaselect()][1],
-                          hovertemplate = paste("Sample:", row.names(pca_df),'<extra></extra>'),
+                          hovertemplate = paste("Sample:", row.names(pca_df),  '<br>',
+                          "Nearest Neighbor ", neighbor_df[,1], ", dist: ", neighbor_df[,1+num_col],
+                          '<extra></extra>'),
                           marker=list(color="#323232")) %>%
         highlight(on = "plotly_click", off = "plotly_doubleclick")
       
