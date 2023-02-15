@@ -18,8 +18,11 @@ library(shinyBS)
 library(shinyWidgets)
 library(RANN)
 library(comprehenr)
+library(here)
 
-print("starting script")
+
+here()
+
 
 options(shiny.maxRequestSize = 30*1024^2)
 options(warn=-1)
@@ -235,46 +238,10 @@ compute_NN <- function(scaling_method, test_pca, n){
 
 
 ################################## READ DATA #################################
+#testpath <- here("data", "lihc_chol_liri_gtex_summarizedExperiment_harmonized.RData")
+#print(testpath)
 
-# load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_summarizedExperiment.RData")
-# print("loaded summarized expr")
-
-# # COUNT DATA
-# gene_names <- rowData(sexpr)$X
-# expr <- assays(sexpr)$counts
-# texpr <- t(expr)
-
-# # PREPROCESSING DATA
-# # remove near zero variance genes
-# pp_nvz <- preProcess(texpr, method = c("nzv")) # 32163 genes
-# train_expr <- predict(pp_nvz, texpr)
-
-# # METADATA
-# metadata <- colData(sexpr)
-# meta_df <- as.data.frame(metadata)
-# meta_df$Treatment_Type <- (sub('\"TACE RFA\"', 'TACE+RFA', meta_df$Treatment_Type))
-# meta_df[meta_df == ''] <- 'not_available'
-# meta_df <- mutate_if(meta_df, is.character, as.factor)
-
-# # DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
-# # running DESeq makes the dispersionFunction available for VST transformation
-# # count data: rows=genes,cols=samples
-# # dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
-#                     #colData = meta_df,
-#                     #design = ~ 1) # no design
-# #dds_train <- DESeq(dds_train)
-# # save(dds_train, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object.RData")
-
-
-# load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_dds_object.RData")
-# print("loaded deseq obj")
-# train_dispersionFunc <- dispersionFunction(dds_train) 
-# train_vst <- vst(dds_train, blind=T) 
-
-# pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
-# train_sc <- predict(pp_sc, train_expr)
-
-load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_summarizedExperiment_harmonized.RData")
+load(here("data", "lihc_chol_liri_gtex_summarizedExperiment_harmonized.RData"))
 gene_names <- rowData(liver_expr)$X
 expr <- assays(liver_expr)$counts
 texpr <- t(expr)
@@ -294,33 +261,43 @@ meta_df$Tumor_stage <- meta_df$Tumor_stage %>% replace_na('not_available')
 meta_df <- mutate_if(meta_df, is.character, as.factor)
 
 
+# # DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
+# # running DESeq makes the dispersionFunction available for VST transformation
+# # count data: rows=genes,cols=samples
+# # dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
+#                     #colData = meta_df,
+#                     #design = ~ 1) # no design
+# #dds_train <- DESeq(dds_train)
+
+
+# pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
+# train_sc <- predict(pp_sc, train_expr)
 
 #####################  APPLY FUNCTIONS ##############################
 # load scaling functions
-load( "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_preproc.RData")
+load(here("data", "lihc_chol_liri_gtex_preproc.RData"))
 train_expr <- predict(preproc_output$pp_nvz, texpr)
 
 # load dds object for VST transformation
-load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object_new_ids.RData")
+load(here("data", "lihc_chol_liri_gtex_dds_object_new_ids.RData"))
 train_dispersionFunc <- dispersionFunction(dds_train) 
 train_vst <- vst(dds_train, blind=T) 
 train_sc <- predict(preproc_output$pp_sc, train_expr)
 
-
 # load scaled data
-load( "/Users/susanne/Documents/code/r_projects/anovaget_app/data/scaled_outputs.RData")
+load(here("data", "scaled_outputs.RData"))
 # scaled_outputs$unitvar, scaled_outputs$log2_scaled, scaled_outputs$minmax
 
-load("/Users/susanne/Documents/code/r_projects/anovaget_app/data/pca_results_new_ids.RData")
+load(here("data", "pca_results_new_ids.RData"))
 
 umap1 <- compute_UMAP(scaled_outputs$unitvar, meta_df, 42)
 umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
 umap3 <- compute_UMAP(scaled_outputs$log2_scaled, meta_df, 42)
 umap4 <- compute_UMAP(scaled_outputs$minmax, meta_df, 42)
+print("computed umaps")
 
 # free space
 rm(sexpr, expr, texpr, log2_scaled,  unitvar, minmax)
-
 
 
 ########################## PCA COLORS ##########################################
@@ -519,7 +496,7 @@ server <- function(input, output, session) {
                                     list(className = "dt-center", targets = "_all")
                                   ),
                                   processing = FALSE,
-                                  pageLength = 10,
+                                  pageLength = 5,
                                   lengthMenu = list(c(5, 10, 25, 50, -1), c("5", "10", "25", "50", "All"))
                   )
       )  
