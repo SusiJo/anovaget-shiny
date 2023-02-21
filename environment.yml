@@ -27,6 +27,7 @@ dependencies:
   - r-shinywidgets
   - r-comprehenr
   - r-here
+  - r-shinyjs
 prefix: ~/miniconda3/envs/anovaget-shiny-env
 
 #  mamba env update -n anovaget-shiny-env --file environment.yml
