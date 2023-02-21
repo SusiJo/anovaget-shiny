@@ -11,11 +11,51 @@ library(DESeq2)
 library(crosstalk)
 library(umap)
 library(reticulate)
-print("starting script")
+library(DT)
+library(shinyjs)
+library(shinybusy)
+library(shinyBS)
+library(shinyWidgets)
+library(RANN)
+library(comprehenr)
+library(here)
 
-# shinyOptions(maxUploadSize=10000)
+
+here()
+
+
 options(shiny.maxRequestSize = 30*1024^2)
 options(warn=-1)
+
+##########################
+
+collapsibleAwesomeCheckboxGroupInput <- 
+  function(inputId, label, i, choices = NULL, selected = NULL,  
+            status = "primary", width = NULL){
+    input <- awesomeCheckboxGroup(inputId, label, choices = choices, 
+                                  selected = selected, width = width,
+                                  status = status)
+    checkboxes <- input[[3]][[2]][[3]][[1]]
+    id_btn <- paste0(inputId, "_btn")
+    id_div <- paste0(inputId, "_collapsible")
+    btn <- actionBttn(id_btn, "More...", color = "primary", size = "sm", 
+                      style = "minimal", icon = icon("collapse-up", lib = "glyphicon"))
+    collapsible <- div(id = id_div, class = "collapse")
+    collapsible$children <- checkboxes[(i+1):length(checkboxes)]
+    children <- c(checkboxes[1:i], list(btn), list(collapsible))
+    input[[3]][[2]][[3]][[1]] <- children
+    script <- sprintf('$(document).ready(function(){
+      $("#%s_btn").attr("data-target", "#%s_collapsible").attr("data-toggle", "collapse").css("margin-bottom", "11px");
+      $("#%s_collapsible").on("hide.bs.collapse", function(){
+        $("#%s_btn").html("<span class=\\\"glyphicon glyphicon-collapse-down\\\"></span> More...");
+      });
+      $("#%s_collapsible").on("show.bs.collapse", function(){
+        $("#%s_btn").html("<span class=\\\"glyphicon glyphicon-collapse-up\\\"></span> Less...");
+      });
+    });', inputId, inputId, inputId, inputId, inputId, inputId)
+    tagList(input, tags$script(HTML(script)))
+  }
+
 
 ### FUNCTIONS ############
 
@@ -53,12 +93,21 @@ scaling_method <- function(mat, method){
     # add pseudocounts to avoid -INF 
     scaled <- apply(mat, 2, function(x) log2(x+1))
   }
+    if(method == "MinMax"){
+    pp <- preProcess(mat, method="range")
+    scaled <- predict(pp, mat)
+  }
   return(scaled)
 }
 
 
-compute_PCA <- function(x, colData){
-  pca <- prcomp(x, center=T, retx=T, scale=T)
+compute_PCA <- function(x, colData, scaling_method){
+  if(scaling_method=="unitvar"){
+    pca <- prcomp(x, center=T, retx=T, scale.=T)
+  }
+  else {
+    pca <- prcomp(x, center=T, retx=T)
+  }
   explained_variance_ratio <- summary(pca)[["importance"]]['Proportion of Variance',]
   explained_variance_ratio <- 100 * explained_variance_ratio
   
@@ -81,11 +130,6 @@ compute_UMAP <- function(x, colData, rstate){
   return(out)
 }
 
-# functions for colors
-my.max <- function(x) ifelse( !all(is.na(x)), max(x, na.rm=T), NA)
-my.min <- function(x) ifelse( !all(is.na(x)), min(x, na.rm=T), NA)
-
-
 preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc_train_sc){
   testdata <- parseInput(inputfile)
   testdata_df <- t(testdata)
@@ -93,6 +137,8 @@ preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc
   
   test_sc <- predict(preProc_train_sc, test_expr)
   test_log2 <- apply(test_expr, 2, function(x) log2(x+1))
+  pp_minmax <- preProcess(test_expr, method="range")
+  test_minmax <- predict(pp_minmax, test_expr)
   
   dds_test <- DESeqDataSetFromMatrix(countData = t(test_expr),
                                       colData=as.data.frame(colnames(testdata)),
@@ -106,7 +152,7 @@ preProcessTestData <- function(inputfile, preProc_train, dispFunc_train, preProc
   
   #rm(dds_test, testdata, testdata_df, test_expr)
   
-  output=list("test_vst"=test_vst, "test_sc"=test_sc, "test_log2"=test_log2)
+  output=list("test_vst"=test_vst, "test_sc"=test_sc, "test_log2"=test_log2, "test_minmax"=test_minmax)
   
   return(output)
 }
@@ -115,7 +161,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "unitvar") {
     testdata <- preProc_output$test_sc
     if(plot_type == "PCA"){
-      train_obj <- out1$pca_obj
+      train_obj <-  pca_results$pca_unitvar$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap1$umap_obj
     }
@@ -123,7 +169,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "vst"){
     testdata <- preProc_output$test_vst
     if(plot_type == "PCA"){
-      train_obj <- out2$pca_obj
+      train_obj <- pca_results$pca_vst$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap2$umap_obj
     }
@@ -131,9 +177,17 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   if (scaling_method == "log") {
     testdata <- preProc_output$test_log2
     if(plot_type == "PCA"){
-      train_obj <- out3$pca_obj
+      train_obj <- pca_results$pca_log$pca_obj
     } else if(plot_type == "UMAP"){
       train_obj <- umap3$umap_obj
+    }
+  }
+  if (scaling_method == "minmax") {
+    testdata <- preProc_output$test_minmax
+    if(plot_type == "PCA"){
+      train_obj <- pca_results$pca_minmax$pca_obj
+    } else if(plot_type == "UMAP"){
+      train_obj <- umap4$umap_obj
     }
   }
 
@@ -145,7 +199,7 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   meta_test[is.na(meta_test)] = "not_available"
   meta_test$Age_at_index <- rep(NA, length(row.names(meta_test)))
   meta_test$Survival_time <- rep(NA, length(row.names(meta_test)))
-  meta_test$Tumor_stage <- rep(NA, length(row.names(meta_test)))
+  meta_test$Tumor_stage %>% replace_na('not_available')
   meta_test <- mutate_if(meta_test, is.character, as.factor)
   
   # df for projected testdata with metadata
@@ -155,70 +209,95 @@ projectTestData <- function(plot_type, preProc_output, scaling_method, header){
   return(testdata_projected)
 }
 
+
+# function to compute nearest neighbors and return dataframe and hoverinfo for plot
+compute_NN <- function(scaling_method, test_pca, n){
+  
+  if (scaling_method == "unitvar") { train_pca <- pca_results$pca_unitvar$df_pca[,1:10] }
+  if (scaling_method == "vst") { train_pca <- pca_results$pca_vst$df_pca[,1:10] }
+  if (scaling_method == "log") { train_pca <- pca_results$pca_log$df_pca[,1:10] }
+  if (scaling_method == "minmax") { train_pca <- pca_results$pca_minmax$df_pca[,1:10] }
+  
+  nearest_neighbors <- nn2(train_pca, test_pca, k=n)
+  # data frame of rounded distances 
+  nmat <- nearest_neighbors$nn.idx
+  ndists <- apply(nearest_neighbors$nn.dist, 2, function(x) round(x,2))
+  # label 
+  neighbor_df <- data.frame(apply(nmat, 2, function(x) paste0("id", x)))
+  neighbor_df <- cbind(neighbor_df, ndists)
+  
+  # idx of neighbor
+  s <- rep(seq(1:n), 2)
+  # n1 n2, n..., dist1, dist2, ...
+  colnames(neighbor_df) <-  to_vec(for(i in 1:length(s)) ifelse(i<=n , paste0("n",s[i]), paste0("dist", s[i])))
+  row.names(neighbor_df) <- row.names(test_pca)
+  
+  return(neighbor_df)
+  
+}
+
+
 ################################## READ DATA #################################
+#testpath <- here("data", "lihc_chol_liri_gtex_summarizedExperiment_harmonized.RData")
+#print(testpath)
 
-load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_summarizedExperiment.RData")
-print("loaded summarized expr")
-
-# COUNT DATA
-gene_names <- rowData(sexpr)$X
-expr <- assays(sexpr)$counts
+load(here("data", "lihc_chol_liri_gtex_summarizedExperiment_harmonized.RData"))
+gene_names <- rowData(liver_expr)$X
+expr <- assays(liver_expr)$counts
 texpr <- t(expr)
 
-# PREPROCESSING DATA
-# remove near zero variance genes
-pp_nvz <- preProcess(texpr, method = c("nzv")) # 32163 genes
-train_expr <- predict(pp_nvz, texpr)
-
 # METADATA
-metadata <- colData(sexpr)
+metadata <- colData(liver_expr)
 meta_df <- as.data.frame(metadata)
-meta_df$Treatment_Type <- (sub('\"TACE RFA\"', 'TACE+RFA', meta_df$Treatment_Type))
-meta_df[meta_df == ''] <- 'not_available'
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "Hepatocellular carcinoma", "HCC"))
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "hepatocellular carcinoma", "HCC"))
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "Cholangiocarcinoma", "CCA"))
+meta_df <- apply(meta_df, 2, function(x) str_replace_all(x, "cholangiocarcinoma", "CCA"))
+meta_df <- as.data.frame(meta_df) 
+row.names(meta_df) <- row.names(metadata)
+meta_df$Age_at_index <- as.numeric(meta_df$Age_at_index)
+meta_df$Survival_time <- as.numeric(meta_df$Survival_time)
+meta_df$Tumor_stage <- meta_df$Tumor_stage %>% replace_na('not_available')
 meta_df <- mutate_if(meta_df, is.character, as.factor)
 
-# DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
-# running DESeq makes the dispersionFunction available for VST transformation
-# count data: rows=genes,cols=samples
-# dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
-                    #colData = meta_df,
-                    #design = ~ 1) # no design
-#dds_train <- DESeq(dds_train)
-# save(dds_train, file = "/Users/susanne/Documents/code/r_projects/anovaget_app/data/lihc_chol_liri_gtex_dds_object.RData")
+
+# # DESEQ OBJECT WITHOUT DESIGN FOR FROZEN VST TRANSFORM
+# # running DESeq makes the dispersionFunction available for VST transformation
+# # count data: rows=genes,cols=samples
+# # dds_train <- DESeqDataSetFromMatrix(countData = t(train_expr), 
+#                     #colData = meta_df,
+#                     #design = ~ 1) # no design
+# #dds_train <- DESeq(dds_train)
 
 
-load("/Users/susanne/Documents/repos/forks/qbic-projects/anovaget-shiny/data/lihc_chol_liri_gtex_dds_object.RData")
-print("loaded deseq obj")
-train_dispersionFunc <- dispersionFunction(dds_train) 
-train_vst <- vst(dds_train, blind=T) 
-
-pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
-train_sc <- predict(pp_sc, train_expr)
+# pp_sc <- preProcess(train_expr, method = c("scale", "center")) # 32163 genes
+# train_sc <- predict(pp_sc, train_expr)
 
 #####################  APPLY FUNCTIONS ##############################
+# load scaling functions
+load(here("data", "lihc_chol_liri_gtex_preproc.RData"))
+train_expr <- predict(preproc_output$pp_nvz, texpr)
 
-# apply scaling
-print("scaling matrices")
-unitvar <- scaling_method(train_expr, "Unit variance")
-log2_scaled <- scaling_method(train_expr, "Log")
+# load dds object for VST transformation
+load(here("data", "lihc_chol_liri_gtex_dds_object_new_ids.RData"))
+train_dispersionFunc <- dispersionFunction(dds_train) 
+train_vst <- vst(dds_train, blind=T) 
+train_sc <- predict(preproc_output$pp_sc, train_expr)
 
-print("computing pcas")
-out1 <- compute_PCA(unitvar, meta_df)
-# make sure to use right input data (samples =rows, genes=cols)
-out2 <- compute_PCA(t(assay(train_vst)), meta_df)
-out3 <- compute_PCA(log2_scaled, meta_df)
+# load scaled data
+load(here("data", "scaled_outputs.RData"))
+# scaled_outputs$unitvar, scaled_outputs$log2_scaled, scaled_outputs$minmax
 
+load(here("data", "pca_results_new_ids.RData"))
 
-print("computing umaps")
-umap1 <- compute_UMAP(unitvar, meta_df, 42)
-print("umap1 done")
+umap1 <- compute_UMAP(scaled_outputs$unitvar, meta_df, 42)
 umap2 <- compute_UMAP(t(assay(train_vst)), meta_df, 42)
-umap3 <- compute_UMAP(log2_scaled, meta_df, 42)
-print("umap done")
+umap3 <- compute_UMAP(scaled_outputs$log2_scaled, meta_df, 42)
+umap4 <- compute_UMAP(scaled_outputs$minmax, meta_df, 42)
+print("computed umaps")
 
 # free space
-rm(sexpr, expr, texpr, log2_scaled,  unitvar, log2_scaled)
-
+rm(sexpr, expr, texpr, log2_scaled,  unitvar, minmax)
 
 
 ########################## PCA COLORS ##########################################
@@ -233,8 +312,8 @@ primary_site <- brewer.pal(length(unique(meta_df$Primary_site))+1, "Set1")
 age_colors <- brewer.pal(n=9, name="Blues")
 vital_status_colors <- brewer.pal(length(unique(meta_df$Vital_status))+1, "Set2")
 sex_colors <- c(female="#EF553B", male="#636EFA", "#000000")
-survival_colors <- brewer.pal(n=9, name="Greys")
-tumor_stage <- brewer.pal(length(unique(meta_df$Tumor_stage)), "Greys")
+survival_colors <- brewer.pal(n=9, name="Blues")
+tumor_stage <- brewer.pal(length(unique(meta_df$Tumor_stage))+1, "Set2")
 icd10_colors <- brewer.pal(length(unique(meta_df$Icd10))+1, "Set2")
 
 
@@ -250,34 +329,40 @@ color_list <- list("Sample_type"= sample_type_colors,
                     "Survival_time"=survival_colors,
                     "Tumor_stage"=tumor_stage,
                     "Icd10"=icd10_colors)
-print(color_list$Sample_type)
 
-plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorby){
+plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorby, row_id){
   
   if (scaling_method == "unitvar"){
     if(plot_type == "PCA"){
-      df_out <- out1$df_pca
-      explained_variance_ratio = out1$evar
+      df_out <- pca_results$pca_unitvar$df_pca
+      explained_variance_ratio = pca_results$pca_unitvar$evar
     } else if(plot_type == "UMAP"){
       df_out <- umap1$df_umap
     }
   }
   if (scaling_method == "vst"){
     if(plot_type == "PCA"){
-      df_out <- out2$df_pca
-      explained_variance_ratio = out2$evar
+      df_out <- pca_results$pca_vst$df_pca
+      explained_variance_ratio = pca_results$pca_vst$evar
     } else if(plot_type == "UMAP"){
       df_out <- umap2$df_umap
     }
   }
   if (scaling_method == "log"){
     if(plot_type == "PCA"){
-      df_out <- out3$df_pca
-      explained_variance_ratio = out3$evar
+      df_out <- pca_results$pca_log$df_pca
+      explained_variance_ratio = pca_results$pca_log$evar
     } else if(plot_type == "UMAP"){
       df_out <- umap3$df_umap
+    }    
+  }
+  if (scaling_method == "minmax"){
+    if(plot_type == "PCA"){
+      df_out <- pca_results$pca_minmax$df_pca
+      explained_variance_ratio = pca_results$pca_minmax$evar
+    } else if(plot_type == "UMAP"){
+      df_out <- umap4$df_umap
     }
-    
   }
   
   pal <- color_list[[paste(colorby)]]
@@ -293,9 +378,20 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
     dim2 <- paste0("UMAP2")
   }
   
+  # dynamically change marker size, color, border and opacity when row is selected in datatable
+  sorted_list <- df_out[order(df_out[,colorby]), ]
+  h_marker <- ifelse(row.names(sorted_list) %in% row_id, 20, 10)
+  h_border <- ifelse(row.names(sorted_list) %in% row_id, 'rgb(0,0,0)', 'rgb(255,255,255)')
+  h_opa <- ifelse(row.names(sorted_list) %in% row_id, 1, 0.8)
+  h_width <- ifelse(row.names(sorted_list) %in% row_id, 2, 1)
+
   fig <- plot_ly(type="scatter", mode= "markers", colors=pal) 
   fig <- fig %>% add_trace(data=tx, x = tx$data()[,pcx], y = tx$data()[,pcy], color = tx$data()[,colorby],
                             text = row.names(df_out),
+                            marker = list(size=h_marker, 
+                                          line = list(color = h_border,
+                                                    width = h_width),
+                                        opacity = h_opa),
                             hovertemplate = paste("Sample:", row.names(df_out), 
                                                   "\nProject:", df_out$Project, 
                                                   "\nSex:", df_out$Sex, 
@@ -313,119 +409,189 @@ plotly_plotting_function <- function(plot_type, pcx, pcy, scaling_method, colorb
   return(fig)
 }
 
-plotly_add_trace <- function(fig, testdata, pcx, pcy, colorby){
-  
-  tx2 <- highlight_key(testdata, ~row.names(testdata))
-  
-  fig <- fig %>%
-    add_trace(data=tx2, x = tx2$data()[,pcx], y = tx2$data()[,pcy], color = tx2$data()[,colorby],
-              hovertemplate = paste("Sample:", row.names(testdata),'<extra></extra>'),
-              marker=list(color="#323232")
-    ) %>%
-    highlight(on = "plotly_click", off = "plotly_doubleclick")
-  fig
-}
-print("loaded function to plot")
-
-
 ############################################ UI ####################################################
 
-# Example of UI with fluidPage
+# UI with fluidPage
 ui <- fluidPage(
-    
+
+  useShinyjs(), 
+  add_busy_spinner(spin = "fading-circle"),  
   # Application title
   titlePanel("Anovaget transcriptomics"),
-    
+  br(),  
   sidebarLayout(
       
     # Sidebar with a slider input
-    sidebarPanel(
-      br(),
+    sidebarPanel(width = 2,
+      h3("Visualization options:"),
       selectInput("meta", "Color by:",
                           names(metadata)[5:length(names(metadata))],
                           selected="Sample_type"), 
       br(),
       selectInput("scaling", "Choose a method for scaling:",
-                    c("Unit variance"="unitvar", "VST"="vst", "Log"="log"),
+                    c("Unit variance"="unitvar", "VST"="vst", "Log"="log", "MinMax"="minmax"),
                     selected="Unit variance"),
       wellPanel(h5("PCA options:"),
       numericInput("pcx", "Principal component on x-axis:", 1, min=1, max=10, step=1),
       numericInput("pcy", "Principal omponent on y-axis:", 2, min=1, max=10, step=1)
-      ),
+        ),
       # Horizontal line ----
       tags$hr(),
+      h3("Upload user data:"),
       fileInput("upload", NULL, multiple=F, width="100%",
                 accept = c(".tsv"), buttonLabel="TSV"),
-      actionButton("Add", "Add user data"),
-      # Horizontal line ----
-      tags$hr()
-    ),
+      numericInput("kn", "Number of nearest neighbors to compute:", 1, min=1, max=10, step=1),
+      br(),
+      actionButton("Add", "Click to add user data in plots"),
+      bsTooltip(id = "Add", title = "Please input a  raw gene-sample expression matrix", 
+                placement = "bottom", trigger = "hover"),     
       
-    # Show a plot of the generated distribution
-    mainPanel(
-      plotlyOutput("pcaPlot"),
+      # Horizontal line ----
       tags$hr(),
-      plotlyOutput("umapPlot"),
-      tableOutput("uploadFile")
-    )
-  )
-)
+      h3("Table options:"),
+      collapsibleAwesomeCheckboxGroupInput("show_vars", "Select variables to show:\n", 3,
+                          names(metadata)[3:length(names(metadata))], 
+                          selected = names(metadata)[3:length(names(metadata))])
+      ),
+      
+    # Show plots reduced dimensionality + tables
+    mainPanel(width=10,
+              fluidRow(
+                column(6, plotlyOutput("pcaPlot")),
+                column(6, plotlyOutput("umapPlot"))
+              ),
+              br(),
+              tags$hr(),
+              tabsetPanel(type="tabs",
+                          tabPanel("Data", 
+                                    br(),
+                                    span(textOutput(outputId  = "tab1_text"), style="font-size: 20px; font-style: bold;"),
+                                    br(),
+                                    wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("trainingMetadata"), 
+                                        style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))),
+                          tabPanel("Neighbor Data", 
+                                    br(),
+                                    span(textOutput(outputId  = "tab2_text"), style="font-size: 20px; font-style: bold;"),
+                                    br(),
+                                    wellPanel(div(style = 'overflow-x: scroll', DT::dataTableOutput("neighbortable"), 
+                                                                  style = "z-index: 10; left:0; right:0; overflow-y:hidden; overflow-xy:auto"))))
+              
+              
+)))
 
 ########################################## SERVER FUNCTION #########################################
   
   # Server logic
 server <- function(input, output, session) {
 
-      metaselect <- reactive(input$meta)
-      scale_method <- reactive(input$scaling)
-      pcx <- reactive(input$pcx)
-      pcy <- reactive(input$pcy)
-      
-      output$pcaPlot <- renderPlotly({
-        
-        pca_fig <- plotly_plotting_function(
-            "PCA",
-            pcx(),
-            pcy(),
-            scaling_method=scale_method(),
-            colorby=metaselect()
-          )
+  # TAB METADATA
+  metadata_table = meta_df[1:nrow(meta_df),3:ncol(meta_df)]
+  output$trainingMetadata <- DT::renderDataTable({
+    DT::datatable(metadata_table[, input$show_vars, drop = FALSE], 
+                  fillContainer = FALSE,
+                  options = list(crollX = TRUE,
+                                  autoWidth=TRUE, 
+                                  columnDefs = list(
+                                    list(orderSequence = c("desc", "asc"), targets = "_all"),
+                                    list(className = "dt-center", targets = "_all")
+                                  ),
+                                  processing = FALSE,
+                                  pageLength = 5,
+                                  lengthMenu = list(c(5, 10, 25, 50, -1), c("5", "10", "25", "50", "All"))
+                  )
+      )  
       })
-      
-      output$umapPlot <- renderPlotly({
-        
-        umap_fig <- plotly_plotting_function(
-          "UMAP",
-          1,
-          2,
-          scaling_method=scale_method(),
-          colorby=metaselect()
-        )
-      })
+  
+  # text in tabsets
+  output$tab1_text <- renderText({"Metadata annotations from TCGA, ICGC and GTEx."})
+  output$tab2_text <- renderText({"Please upload a dataset to compute approximate nearest neighbors to TCGA, ICGC and GTEx data. Nearest Neighbors computed on first 10 Principal Components."})
+  
 
-      ext_data <- reactive({
+  # value to store datatable id
+  id_sel <- reactiveVal()
+  
+  # observe if row in datatable is selected
+  observe({
+    idx <- input$trainingMetadata_rows_selected
+    id_sel <- row.names(meta_df)[idx]
+    id_sel_old_new <- c(id_sel(), id_sel)
+    id_sel(unique(id_sel_old_new))
+    
+  })
+  
+  
+  # clear the set of selected datapoints when a double-click occurs
+  observeEvent(event_data("plotly_doubleclick"), {
+    id_sel(NULL)
+  })
+  
+  metaselect <- reactive(input$meta)
+  scale_method <- reactive(input$scaling)
+  pcx <- reactive(input$pcx)
+  pcy <- reactive(input$pcy)
+  kn <- reactive(input$kn)
+      
+  output$pcaPlot <- renderPlotly({
+        
+    plotly_plotting_function(
+      "PCA",
+      pcx(),
+      pcy(),
+      scaling_method=scale_method(),
+      colorby=metaselect(),
+      row_id=id_sel()
+      )
+    })
+      
+    output$umapPlot <- renderPlotly({
+        
+      plotly_plotting_function(
+        "UMAP",
+        1, # umap in 2 just returns first 2 dimensions
+        2,
+        scaling_method=scale_method(),
+        colorby=metaselect(),
+        row_id=id_sel()
+        )
+    })
+
+    ext_data <- reactive({
       req(input$upload)
       ext <- tools::file_ext(input$upload$name)
       validate(need(ext == "tsv", "Invalid file. Please upload a .tsv file"))
       df <- read.table(input$upload$datapath, sep = "\t", header=T)
       
-      out_pp <- preProcessTestData(df, pp_nvz, train_dispersionFunc, pp_sc)
+      out_pp <- preProcessTestData(df, preproc_output$pp_nvz, preproc_output$train_dispersionFunc, preproc_output$pp_sc)
       return(out_pp)
     })
 
-      observeEvent(input$Add,{
+    observeEvent(input$Add,{      
+      output$tab2_text <- renderText({"Nearest neighbors are being computed."})
+
       out = ext_data()
+      # project testdata into PCA space
       pca_df <- projectTestData("PCA", out, scale_method(), colnames(meta_df))
       pca_df[is.na(pca_df)] <- "not_available"
-      
+
+      # compute nearest neighbors in PCA space with first 10 PCs
+      neighbor_df <- compute_NN(scale_method(), pca_df[,1:10], kn())
+      # render neighbor dataframe
+      output$neighbortable <-  DT::renderDataTable({ DT::datatable(neighbor_df) })
+      num_col <- ncol(neighbor_df)/2
+      output$tab2_text <- renderText({"Nearest Neighbors to TCGA, ICGC, GTEx data."})
+
+      # project testdata into UMAP space      
       umap_df <- projectTestData("UMAP", out, scale_method(), colnames(meta_df))
       umap_df[is.na(umap_df)] <- "not_available"
 
+      # update plots based on user input
       tx_pca <- highlight_key(pca_df, ~row.names(pca_df)) 
       plotlyProxy("pcaPlot", session) %>%
         plotlyProxyInvoke("addTraces", x=tx_pca$data()[,pcx()], y=tx_pca$data()[,pcy()], color=tx_pca$data()[,metaselect()],
                           type="scatter", mode="markers", name=tx_pca$data()[,metaselect()][1],
-                          hovertemplate = paste("Sample:", row.names(pca_df),'<extra></extra>'),
+                          hovertemplate = paste("Sample:", row.names(pca_df),  '<br>',
+                          "Nearest Neighbor ", neighbor_df[,1], ", dist: ", neighbor_df[,1+num_col],
+                          '<extra></extra>'),
                           marker=list(color="#323232")) %>%
         highlight(on = "plotly_click", off = "plotly_doubleclick")
       
@@ -437,9 +603,8 @@ server <- function(input, output, session) {
                           hovertemplate = paste("Sample:", row.names(umap_df),'<extra></extra>'),
                           marker=list(color="#323232")) %>%
         highlight(on = "plotly_click", off = "plotly_doubleclick")
-      
-      
       })
+
 }
 
 ########################################### RUN APP #################################################
